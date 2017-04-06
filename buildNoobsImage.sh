@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/bin/bash
 # Get Options
 
 # This should be done with getopt or by scanning the server. For now configure statically.
@@ -21,11 +21,7 @@ if [ ! -d noobs_zips ]
 then
   mkdir noobs_zips
 fi
-# Make a place to hold noobs extracted images
-if [ ! -d noobs_extracts ]
-then
-  mkdir noobs_extracts
-fi
+
 # Make a place to hold created noobs images files
 if [ ! -d noobs_images ]
 then
@@ -35,9 +31,9 @@ fi
 ##############################################################
 # 1. Get NOOBS From Raspi Foundation
 ##############################################################
-if [ -f noobs_zips/NOOBS_v2_3_0.zip ]
+if [ -f noobs_zips/$NOOBS_FILE ]
 then
-   echo "Already Downloaded NOOBS Image ... Moving On ..."
+   echo "Already Downloaded NOOBS .zip ... Moving On ..."
 else
    DNLD_TARGET=$NOOBS_DNLD_SERVER/$NOOBS_FOLDER/$NOOBS_FILE
    echo "Downloading NOOBS from $DNLD_TARGET"
@@ -45,23 +41,14 @@ else
 fi
 
 
-##############################################################
-# 2. Unzip Noobs (Temporary)
-##############################################################
-NOOBS_UNZIP_DIR="noobs_extracts/NOOBS_$NOOBS_VERSION"
-rm -rf $NOOBS_UNZIP_DIR
-mkdir $NOOBS_UNZIP_DIR
-pushd $NOOBS_UNZIP_DIR
-unzip ../../noobs_zips/$NOOBS_FILE
-popd
-
 ############################################################
-# 3. Work Out How Big NOOBS Is.
+# 2. Work Out How Big NOOBS Is.
 #    Add 20% for file system overheads.
 ############################################################
-IMG_FILE_SIZE=$(du -s --block-size=1024 noobs_zips | awk -e '{print $1}')
-IMG_FILE_SIZE=$(echo $IMG_FILE_SIZE | awk -e '{print int($1*1.2)}')
-IMG_FILE_SIZE_HUMAN=$(echo $IMG_FILE_SIZE | awk -e '{print $1/(1024*1024)}')
+# Get uncompressed size in kB
+IMG_FILE_SIZE=$(unzip -l noobs_zips/$NOOBS_FILE | tail -n 1 | awk '{print int($1/1024)}')
+IMG_FILE_SIZE=$(echo $IMG_FILE_SIZE | awk '{print int($1*1.2)}')
+IMG_FILE_SIZE_HUMAN=$(echo $IMG_FILE_SIZE | awk '{print $1/(1024*1024)}')
 echo "NOOBS Image file will be $IMG_FILE_SIZE_HUMAN G"
 
 ############################################################
@@ -74,22 +61,24 @@ dd if=/dev/zero of=noobs_images/$NOOBS_IMG bs=1024 count=$IMG_FILE_SIZE
 ############################################################
 # 4. Create a loopback device that points to the file
 ############################################################
-echo "Creating loopback device on /dev/loop5"
-sudo losetup /dev/loop5 noobs_images/$NOOBS_IMG
+loopDevice=`losetup -f`
+echo "Creating loopback device on" $loopDevice
+sudo losetup $loopDevice noobs_images/$NOOBS_IMG
 
 ############################################################
 # 5. Create a 100% FAT32 Parition In The File
 ############################################################
 echo "Partitioning the loopback device"
-sudo parted -s /dev/loop5 mklabel msdos
-sudo parted -s /dev/loop5 -a optimal mkpart primary fat32 0% 100%
-sudo parted -s /dev/loop5 set 1 boot on
+sudo parted -s $loopDevice mklabel msdos
+sudo parted -s $loopDevice -a optimal mkpart primary fat32 0% 100%
+sudo parted -s $loopDevice set 1 boot on
 
 ############################################################
 # 6. Format The Partition
 ############################################################
 echo "Formatting the partition"
-sudo mkfs.msdos /dev/loop5p1
+p1="p1"
+sudo mkfs.msdos $loopDevice$p1
 
 ############################################################
 # 7. Mount the New Filesystem / Partition
@@ -97,7 +86,7 @@ sudo mkfs.msdos /dev/loop5p1
 echo "Mounting the filesystem"
 sudo rm -rf /mnt/NOOBS
 sudo mkdir /mnt/NOOBS
-sudo mount /dev/loop5p1 /mnt/NOOBS
+sudo mount $loopDevice$p1 /mnt/NOOBS
 
 ############################################################
 # 8. Unzip NOOBS into the New Filesystem
@@ -113,12 +102,13 @@ popd
 ############################################################
 echo "Unmounting ..."
 sudo umount /mnt/NOOBS
+sudo rm -rf /mnt/NOOBS
 
 ############################################################
 # 10. Detach The Loopback Driver From The File
 ############################################################
 echo "Detach from the loopback driver"
-sudo losetup -d /dev/loop5
+sudo losetup -d $loopDevice
 
 ############################################################
 # 11. Happy Days. We're Done.
